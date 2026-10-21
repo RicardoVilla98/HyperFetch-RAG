@@ -1,0 +1,69 @@
+version: '3.8'
+
+# ==============================================================================
+# HyperFetch-RAG: Production Orchestration (FastAPI + Qdrant Vector Engine)
+# ==============================================================================
+
+services:
+  # --- Vector Database Service ---
+  qdrant:
+    image: qdrant/qdrant:v1.8.4
+    container_name: hyperfetch-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # REST API
+      - "6334:6334"   # gRPC API
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__LOG_LEVEL=INFO
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6333/readyz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - hyperfetch_network
+
+  # --- HyperFetch Core API & RAG Engine ---
+  hyperfetch-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hyperfetch-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - APP_ENV=production
+    volumes:
+      - ./data:/app/data
+      - huggingface_cache:/home/hyperfetch/.cache
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - hyperfetch_network
+
+# --- Persistent Storage & Networks ---
+volumes:
+  qdrant_storage:
+    driver: local
+  huggingface_cache:
+    driver: local
+
+networks:
+  hyperfetch_network:
+    driver: bridge
